@@ -38,6 +38,13 @@ export default function Home() {
   const [isSpeaker, setIsSpeaker] = useState(true);
   const [callDuration, setCallDuration] = useState(0);
 
+  // Video feed error & custom stream configuration
+  const [feedError, setFeedError] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [customUrlInput, setCustomUrlInput] = useState("");
+  const [isSavingUrl, setIsSavingUrl] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
   const userId = "blind_user_1";
   const ringAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -136,6 +143,7 @@ export default function Home() {
       setCallData(data);
       if (data.room && typeof data.room === "string" && data.room.startsWith("http")) {
         setStreamUrl(data.room);
+        setCustomUrlInput((prev) => (prev ? prev : data.room || ""));
       }
     });
 
@@ -287,6 +295,32 @@ export default function Home() {
     }, 1200);
   };
 
+  // Save custom stream URL to Firebase
+  const handleSaveStreamUrl = async () => {
+    if (!customUrlInput.trim()) return;
+    setIsSavingUrl(true);
+    setSaveStatus(null);
+    try {
+      const cleanUrl = customUrlInput.trim().replace(/\/$/, "");
+      setStreamUrl(cleanUrl);
+      const callRef = ref(database, `users/${userId}/call`);
+      await update(callRef, {
+        room: cleanUrl,
+        timestamp: Math.floor(Date.now() / 1000),
+      });
+      setFeedError(false);
+      setSaveStatus("Stream URL saved and synced!");
+      setTimeout(() => {
+        setSaveStatus(null);
+        setShowSettings(false);
+      }, 1400);
+    } catch (e) {
+      setSaveStatus("Failed to update stream URL.");
+    } finally {
+      setIsSavingUrl(false);
+    }
+  };
+
   // Resolve camera feed URL
   const activeRoom = callData.room && callData.room.startsWith("http") ? callData.room : streamUrl;
   const feedSrc =
@@ -295,6 +329,15 @@ export default function Home() {
         ? activeRoom
         : `${activeRoom.replace(/\/$/, "")}/video_feed`
       : "";
+
+  // Reset feed error when stream URL or call state changes
+  useEffect(() => {
+    setFeedError(false);
+  }, [state, activeRoom]);
+
+  // Mixed content detection (HTTPS page attempting to load insecure HTTP feed)
+  const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+  const isMixedContent = isHttps && !!feedSrc && feedSrc.startsWith("http://");
 
   const hasCoords = typeof location.latitude === "number" && typeof location.longitude === "number";
   const mapEmbedUrl = hasCoords
@@ -316,18 +359,32 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Apple Style Device Battery & Online Status Badge */}
-        <div className="flex items-center gap-2 bg-[#E5E5EA]/70 px-3 py-1.5 rounded-full text-xs font-semibold text-[#3C3C43]">
-          <span
-            className={`h-2 w-2 rounded-full ${
-              state === "in_call"
-                ? "bg-[#34C759]"
-                : state === "ringing" || state === "calling"
-                ? "bg-[#FF9500] animate-pulse"
-                : "bg-[#34C759]"
-            }`}
-          />
-          <span className="capitalize">{state === "in_call" ? "Live" : state === "idle" ? "Online" : state}</span>
+        <div className="flex items-center gap-2">
+          {/* Settings button to configure custom tunnel / stream URL */}
+          <button
+            onClick={() => setShowSettings(true)}
+            title="Video Feed Settings"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-[#E5E5EA]/80 hover:bg-[#E5E5EA] text-[#3C3C43] active:scale-95 transition-all cursor-pointer"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+
+          {/* Apple Style Device Battery & Online Status Badge */}
+          <div className="flex items-center gap-2 bg-[#E5E5EA]/70 px-3 py-1.5 rounded-full text-xs font-semibold text-[#3C3C43]">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                state === "in_call"
+                  ? "bg-[#34C759]"
+                  : state === "ringing" || state === "calling"
+                  ? "bg-[#FF9500] animate-pulse"
+                  : "bg-[#34C759]"
+              }`}
+            />
+            <span className="capitalize">{state === "in_call" ? "Live" : state === "idle" ? "Online" : state}</span>
+          </div>
         </div>
       </header>
 
@@ -335,19 +392,61 @@ export default function Home() {
       <main className="flex-1 px-4 py-4 pb-28">
         {/* ══════════════════════════════════════════════════════════════
             TAB 1: CALLING APP UI (Apple FaceTime Layout)
-           ══════════════════════════════════════════════════════════════ */}
+            ══════════════════════════════════════════════════════════════ */}
         {activeTab === "call" && (
           <div className="flex flex-col h-full justify-between gap-4">
             {/* Call State: IN CALL (FaceTime Video Viewfinder Screen) */}
             {state === "in_call" ? (
               <div className="relative flex-1 min-h-[460px] w-full rounded-[32px] overflow-hidden bg-black shadow-2xl flex flex-col justify-between p-4">
-                {feedSrc ? (
+                {feedSrc && !feedError && !isMixedContent ? (
                   /* eslint-disable-next-line @next/next/no-img-element */
                   <img
                     src={feedSrc}
                     alt="Live Video"
                     className="absolute inset-0 h-full w-full object-cover"
+                    onError={() => setFeedError(true)}
                   />
+                ) : isMixedContent || feedError ? (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-5 bg-[#1C1C1E]/95 text-white text-center backdrop-blur-md">
+                    <div className="h-12 w-12 rounded-2xl bg-[#FF9500]/15 flex items-center justify-center text-2xl mb-3 border border-[#FF9500]/30 text-[#FF9500]">
+                      {isMixedContent ? "🔒" : "⚠️"}
+                    </div>
+                    <h3 className="text-sm font-bold text-white mb-1">
+                      {isMixedContent ? "HTTP Stream Blocked (Mixed Content)" : "Camera Stream Unreachable"}
+                    </h3>
+                    <p className="text-xs text-[#8E8E93] max-w-xs leading-relaxed mb-3">
+                      {isMixedContent
+                        ? "Vercel loads this website securely over HTTPS. Modern browsers block insecure HTTP streams inside HTTPS pages. In addition, local IP addresses (192.168.x.x) cannot be reached over the internet."
+                        : "Unable to load video feed. Check that the smart glasses camera feed is running and reachable."}
+                    </p>
+
+                    {feedSrc && (
+                      <div className="w-full max-w-xs bg-black/50 rounded-xl p-2.5 mb-3 border border-white/10 text-left">
+                        <span className="text-[10px] text-[#8E8E93] uppercase font-bold block mb-0.5">Attempted Stream URL:</span>
+                        <code className="text-[11px] font-mono text-[#FF9500] break-all block">{feedSrc}</code>
+                      </div>
+                    )}
+
+                    <div className="flex flex-col gap-2 w-full max-w-xs">
+                      <button
+                        onClick={() => setShowSettings(true)}
+                        className="w-full py-2.5 px-3 bg-[#007AFF] hover:bg-[#0066D6] active:scale-98 text-white rounded-xl text-xs font-semibold shadow transition-all cursor-pointer"
+                      >
+                        Set Secure HTTPS Tunnel URL
+                      </button>
+
+                      {feedSrc && (
+                        <a
+                          href={feedSrc}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full py-2 px-3 bg-white/10 hover:bg-white/15 active:scale-98 text-white rounded-xl text-xs font-medium transition-all text-center"
+                        >
+                          Try Opening Direct Feed ↗
+                        </a>
+                      )}
+                    </div>
+                  </div>
                 ) : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 gap-3">
                     <div className="h-12 w-12 rounded-full border-2 border-[#34C759] border-t-transparent animate-spin" />
@@ -811,6 +910,82 @@ export default function Home() {
         src="https://cdn.freesound.org/previews/274/274183_5121236-lq.mp3"
         preload="auto"
       />
+
+      {/* ── STREAM SETTINGS MODAL ── */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm bg-white rounded-[28px] p-6 shadow-2xl border border-[#E5E5EA] flex flex-col gap-4 text-black">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📹</span>
+                <h3 className="text-base font-bold text-black">Camera Stream Settings</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setShowSettings(false);
+                  setSaveStatus(null);
+                }}
+                className="h-8 w-8 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] flex items-center justify-center text-black font-semibold text-sm transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="text-xs text-[#636366] leading-relaxed">
+              When hosted on Vercel, the stream must use a secure <strong className="text-black">HTTPS</strong> tunnel URL (like Cloudflare Tunnel or ngrok) to prevent Mixed Content browser blocking.
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-[#8E8E93]">
+                Glasses Stream URL
+              </label>
+              <input
+                type="text"
+                value={customUrlInput}
+                onChange={(e) => setCustomUrlInput(e.target.value)}
+                placeholder="e.g. https://xxxx.trycloudflare.com"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F2F2F7] border border-[#E5E5EA] text-xs font-mono text-black focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
+              />
+              <span className="text-[10px] text-[#8E8E93]">
+                Active feed: {activeRoom || "None (default local)"}
+              </span>
+            </div>
+
+            {saveStatus && (
+              <div className="text-xs font-medium text-[#34C759] bg-[#34C759]/10 rounded-xl p-2.5 text-center">
+                {saveStatus}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2 pt-1">
+              <button
+                onClick={handleSaveStreamUrl}
+                disabled={isSavingUrl}
+                className="w-full py-3 bg-[#007AFF] hover:bg-[#0066D6] text-white rounded-xl text-xs font-semibold shadow active:scale-98 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSavingUrl ? "Saving..." : "Save & Sync Stream URL"}
+              </button>
+
+              <button
+                onClick={() => {
+                  setCustomUrlInput("http://localhost:5000");
+                }}
+                className="w-full py-2 bg-[#F2F2F7] hover:bg-[#E5E5EA] text-[#007AFF] rounded-xl text-xs font-medium transition-all cursor-pointer"
+              >
+                Reset to Localhost (for local dev)
+              </button>
+            </div>
+
+            <div className="pt-2 border-t border-[#F2F2F7] text-[11px] text-[#8E8E93] flex flex-col gap-1">
+              <span className="font-semibold text-black">Quick Tunnel Setup on Smart Glasses / Pi:</span>
+              <code className="bg-[#F2F2F7] p-1.5 rounded font-mono text-[10px] text-[#3C3C43]">
+                cloudflared tunnel --url http://localhost:5000
+              </code>
+              <span>Paste the generated HTTPS link above.</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
