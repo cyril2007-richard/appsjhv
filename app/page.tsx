@@ -323,12 +323,26 @@ export default function Home() {
 
   // Resolve camera feed URL
   const activeRoom = callData.room && callData.room.startsWith("http") ? callData.room : streamUrl;
-  const feedSrc =
+
+  // Build proxied feed URL: route HTTPS ngrok streams through our server-side proxy
+  // to bypass ngrok's browser interstitial and avoid mixed-content issues
+  const rawFeedSrc =
     state === "in_call" && activeRoom
       ? activeRoom.endsWith("/video_feed")
         ? activeRoom
         : `${activeRoom.replace(/\/$/, "")}/video_feed`
       : "";
+
+  const feedSrc = (() => {
+    if (!rawFeedSrc) return "";
+    // If the stream is an HTTPS URL (e.g. ngrok), proxy through our API route
+    if (rawFeedSrc.startsWith("https://")) {
+      const baseUrl = activeRoom.replace(/\/$/, "");
+      return `/api/video-proxy?url=${encodeURIComponent(baseUrl)}`;
+    }
+    // Local HTTP streams work in dev but not on Vercel
+    return rawFeedSrc;
+  })();
 
   // Reset feed error when stream URL or call state changes
   useEffect(() => {
@@ -337,7 +351,7 @@ export default function Home() {
 
   // Mixed content detection (HTTPS page attempting to load insecure HTTP feed)
   const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
-  const isMixedContent = isHttps && !!feedSrc && feedSrc.startsWith("http://");
+  const isMixedContent = isHttps && !!rawFeedSrc && rawFeedSrc.startsWith("http://");
 
   const hasCoords = typeof location.latitude === "number" && typeof location.longitude === "number";
   const mapEmbedUrl = hasCoords
